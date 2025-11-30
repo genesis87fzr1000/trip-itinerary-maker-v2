@@ -10,25 +10,27 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: "waypoints must be >= 2" });
   }
 
-  const API_KEY = process.env.GOOGLE_MAPS_API_KEY;
+  const API_KEY = process.env.GOOGLE_MAPS_SERVER_KEY;
 
-  // 全区間の結果（複数候補も全て保持）
+  if (!API_KEY) {
+    return res.status(500).json({ error: "Server API key is not set" });
+  }
+
   const allSegments = [];
 
   try {
-    // 区間ごとに Directions API を叩く
+    // 区間ごとに Directions API を呼ぶ
     for (let i = 0; i < waypoints.length - 1; i++) {
       const origin = encodeURIComponent(waypoints[i]);
       const destination = encodeURIComponent(waypoints[i + 1]);
 
-      const url =
-        `https://maps.googleapis.com/maps/api/directions/json` +
-        `?origin=${origin}` +
-        `&destination=${destination}` +
-        `&alternatives=true` +
-        `&mode=driving` +
-        `&language=ja` +
-        `&key=${API_KEY}`;
+      const url = `https://maps.googleapis.com/maps/api/directions/json` +
+                  `?origin=${origin}` +
+                  `&destination=${destination}` +
+                  `&alternatives=true` +
+                  `&mode=driving` +
+                  `&language=ja` +
+                  `&key=${API_KEY}`;
 
       const response = await fetch(url);
       const data = await response.json();
@@ -43,7 +45,7 @@ export default async function handler(req, res) {
       allSegments.push({
         from: waypoints[i],
         to: waypoints[i + 1],
-        routes: data.routes,   // 各区間の複数候補
+        routes: data.routes, // 各区間の複数候補
       });
     }
 
