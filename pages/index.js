@@ -1,222 +1,116 @@
-// pages/index.js
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 
 export default function Home() {
-  const [googleLoaded, setGoogleLoaded] = useState(false);
   const [map, setMap] = useState(null);
+  const [directionsRenderer, setDirectionsRenderer] = useState(null);
+  const [points, setPoints] = useState([]);
+  const [result, setResult] = useState(null);
 
-  const [waypoints, setWaypoints] = useState([]);
-  const [inputValue, setInputValue] = useState("");
-
-  const [segments, setSegments] = useState([]); // ← サーバー側に合わせて修正
-  const [selected, setSelected] = useState({ seg: null, route: null });
-
-  const segmentRenderers = useRef([]); // 各区間の候補ルート表示用
-  const highlightRenderer = useRef(null); // 選択ルート表示用
-
-  // -------------------------------------------------------
-  // Google Maps Script 読み込み
-  // -------------------------------------------------------
+  // Google Maps 初期化
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (!window.google) return;
 
-    if (window.google && window.google.maps) {
-      setGoogleLoaded(true);
-      return;
-    }
+    const mapOptions = {
+      zoom: 10,
+      center: { lat: 35.6895, lng: 139.6917 },
+    };
 
-    const script = document.createElement("script");
-    script.src =
-      `https://maps.googleapis.com/maps/api/js?key=${process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY}&libraries=places`;
-    script.async = true;
-    script.onload = () => setGoogleLoaded(true);
-    document.head.appendChild(script);
+    const newMap = new window.google.maps.Map(
+      document.getElementById("map"),
+      mapOptions
+    );
+
+    const renderer = new window.google.maps.DirectionsRenderer({
+      map: newMap,
+      suppressMarkers: false,
+    });
+
+    setMap(newMap);
+    setDirectionsRenderer(renderer);
   }, []);
 
-  // -------------------------------------------------------
-  // 地図初期化
-  // -------------------------------------------------------
-  useEffect(() => {
-    if (!googleLoaded) return;
-
-    const instance = new google.maps.Map(document.getElementById("map"), {
-      center: { lat: 35.681236, lng: 139.767125 },
-      zoom: 10,
-    });
-
-    setMap(instance);
-  }, [googleLoaded]);
-
-  // -------------------------------------------------------
-  // 地点追加
-  // -------------------------------------------------------
-  const addWaypoint = () => {
-    if (!inputValue.trim()) return;
-    setWaypoints((prev) => [...prev, inputValue.trim()]);
-    setInputValue("");
-  };
-
-  // -------------------------------------------------------
-  // ルート計算（サーバーキー経由）
-  // -------------------------------------------------------
-  const calculateRoutes = async () => {
-    if (waypoints.length < 2) {
-      alert("2箇所以上を入力してください。");
+  // ルート検索
+  const fetchRoute = async () => {
+    if (points.length < 2) {
+      alert("少なくとも2地点を追加してください。");
       return;
     }
 
-    try {
-      const res = await fetch("/api/directions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ waypoints }),
-      });
-
-      const data = await res.json();
-
-      if (!data.segments || data.segments.length === 0) {
-        alert("Google Directions API がルートを返しませんでした。");
-        return;
-      }
-
-      setSegments(data.segments);
-
-      clearAllRenderers();
-      renderAllSegments(data.segments);
-
-    } catch (err) {
-      console.error(err);
-      alert("サーバーでルート取得に失敗しました");
-    }
-  };
-
-  // -------------------------------------------------------
-  // 全区間の候補ルートを薄く描画
-  // -------------------------------------------------------
-  const renderAllSegments = (segmentsData) => {
-    if (!map) return;
-
-    clearAllRenderers();
-
-    segmentsData.forEach((seg, sIdx) => {
-      segmentRenderers.current[sIdx] = [];
-
-      seg.routes.forEach((route, rIdx) => {
-        const renderer = new google.maps.DirectionsRenderer({
-          map,
-          directions: { routes: [route] },
-          suppressMarkers: false,
-          polylineOptions: { strokeOpacity: 0.25, strokeWeight: 4 },
-        });
-
-        segmentRenderers.current[sIdx][rIdx] = renderer;
-      });
-    });
-  };
-
-  const clearAllRenderers = () => {
-    segmentRenderers.current.forEach((seg) =>
-      seg?.forEach((r) => r?.setMap(null))
-    );
-    segmentRenderers.current = [];
-  };
-
-  const clearHighlight = () => {
-    if (highlightRenderer.current) {
-      highlightRenderer.current.setMap(null);
-    }
-    highlightRenderer.current = null;
-  };
-
-  // -------------------------------------------------------
-  // 任意のルートを選択して強調表示
-  // -------------------------------------------------------
-  const highlightRoute = (sIdx, rIdx) => {
-    if (!segments[sIdx] || !segments[sIdx].routes[rIdx]) return;
-
-    setSelected({ seg: sIdx, route: rIdx });
-
-    clearHighlight();
-
-    const renderer = new google.maps.DirectionsRenderer({
-      map,
-      directions: { routes: [segments[sIdx].routes[rIdx]] },
-      suppressMarkers: false,
-      polylineOptions: { strokeOpacity: 1.0, strokeWeight: 6 },
+    const res = await fetch(`/api/directions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ points }),
     });
 
-    highlightRenderer.current = renderer;
+    const data = await res.json();
+    if (!data || !data.routes || data.routes.length === 0) {
+      alert("Google Directions API がルートを返しませんでした。");
+      return;
+    }
+
+    setResult(data);
+
+    // ★ 地図に描画するため DirectionsRenderer が読める形式に変換
+    const gRoute = data.routes[0]; // 1つ目の候補を地図に描画
+
+    directionsRenderer.setDirections({
+      routes: [
+        {
+          legs: gRoute.legs,
+          overview_polyline: {
+            // Google が返す polyline をそのまま使う
+            points: gRoute.overview_polyline.points,
+          },
+        },
+      ],
+      request: {},
+    });
   };
 
   return (
-    <div style={{ padding: 20 }}>
-      <h1>Trip Itinerary Maker（ServerKey 版）</h1>
+    <div>
+      <h1>ルート検索</h1>
 
-      {/* ------------------------------------ */}
-      {/* 入力 */}
-      {/* ------------------------------------ */}
-      <div>
-        <input
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          placeholder="地点名を入力（例: 新宿駅）"
-        />
-        <button onClick={addWaypoint}>追加</button>
-      </div>
+      {/* 地点追加 */}
+      <input
+        type="text"
+        placeholder="場所名を入力"
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            setPoints([...points, e.target.value]);
+            e.target.value = "";
+          }
+        }}
+      />
 
-      <div style={{ marginTop: 10 }}>
-        <h3>追加された地点</h3>
-        <ul>
-          {waypoints.map((p, i) => (
-            <li key={i}>{i + 1}. {p}</li>
-          ))}
-        </ul>
-      </div>
-
-      <button onClick={calculateRoutes}>ルート計算</button>
-
-      {/* ------------------------------------ */}
-      {/* ルート候補一覧 */}
-      {/* ------------------------------------ */}
-      <div style={{ marginTop: 20 }}>
-        <h2>検索結果（区間ごとの候補）</h2>
-
-        {segments.map((seg, sIdx) => (
-          <div key={sIdx} style={{ marginBottom: 20 }}>
-            <h3>
-              区間 {sIdx + 1}：{seg.from} → {seg.to}
-            </h3>
-
-            {seg.routes.map((route, rIdx) => (
-              <div
-                key={rIdx}
-                onClick={() => highlightRoute(sIdx, rIdx)}
-                style={{
-                  border: "1px solid #ccc",
-                  padding: 10,
-                  marginBottom: 10,
-                  cursor: "pointer",
-                  background:
-                    selected.seg === sIdx && selected.route === rIdx
-                      ? "#eef"
-                      : "white",
-                }}
-              >
-                <b>候補 {rIdx + 1}</b><br />
-                距離：{route.legs[0].distance.text} / 
-                時間：{route.legs[0].duration.text}
-              </div>
-            ))}
-          </div>
+      <ul>
+        {points.map((p, i) => (
+          <li key={i}>{i + 1}. {p}</li>
         ))}
-      </div>
+      </ul>
 
-      {/* ------------------------------------ */}
-      {/* 地図 */}
-      {/* ------------------------------------ */}
+      <button onClick={fetchRoute}>ルート検索</button>
+
+      {/* ルート文字情報 */}
+      {result && (
+        <div>
+          <h2>検索結果</h2>
+          {result.routes.map((r, i) => (
+            <div key={i}>
+              <h3>候補 {i + 1}</h3>
+              {r.legs.map((l, j) => (
+                <p key={j}>
+                  {l.start_address} → {l.end_address}（{l.distance.text}, {l.duration.text}）
+                </p>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div
         id="map"
-        style={{ width: "100%", height: "500px", marginTop: 20 }}
+        style={{ width: "100%", height: "500px", marginTop: "20px" }}
       ></div>
     </div>
   );
